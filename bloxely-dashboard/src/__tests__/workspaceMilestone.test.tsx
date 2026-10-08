@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
 import { DashboardProvider, dashboardReducer, useDashboard } from '../context/DashboardContext';
@@ -36,12 +36,16 @@ const renderLayoutHarness = () => render(
 
 beforeEach(() => {
   localStorage.clear();
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, options: RequestInit) => {
+    const { brainDump } = JSON.parse(String(options.body)) as { brainDump: string };
+    return new Response(JSON.stringify({ plan: createWorkspacePlan(brainDump) }), { status: 200 });
+  }));
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
   });
 });
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Bloxely 2.0 milestone 1', () => {
   it('builds a deterministic plan, limits block types, and confirms atomically', () => {
@@ -81,14 +85,14 @@ describe('Bloxely 2.0 milestone 1', () => {
     expect(await screen.findByRole('heading', { name: "What's on your mind?" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Brain dump'), { target: { value: 'Finish homepage today. Call Sarah.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Build my workspace' }));
-    expect(screen.getByRole('heading', { name: 'Review your plan' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Review your plan' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Task 1'), { target: { value: 'Ship homepage' } });
     fireEvent.click(screen.getByRole('button', { name: 'Remove task 2' }));
     fireEvent.change(screen.getByLabelText('Note 1'), { target: { value: 'Call Sarah after lunch' } });
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.getByLabelText('Brain dump')).toHaveValue('Finish homepage today. Call Sarah.');
     fireEvent.click(screen.getByRole('button', { name: 'Build my workspace' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Build workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Build workspace' }));
     await waitFor(() => expect(screen.getByText('Finish homepage today')).toBeInTheDocument());
     expect(screen.getByText('Call Sarah')).toBeInTheDocument();
   });
@@ -203,8 +207,8 @@ describe('Bloxely 2.0 milestone 1', () => {
     await screen.findByLabelText('Brain dump');
     fireEvent.change(screen.getByLabelText('Brain dump'), { target: { value: 'Finish homepage.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Build my workspace' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove note 1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Build workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove note 1' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Build workspace' }));
     await waitFor(() => expect(screen.getByText('Finish homepage')).toBeInTheDocument());
     expect(screen.queryByText('Notes')).not.toBeInTheDocument();
   });
@@ -239,7 +243,7 @@ describe('Bloxely 2.0 milestone 1', () => {
     expect(localStorage.getItem('bloxely-dashboard-state')).toBe(original);
     fireEvent.change(screen.getByLabelText('Brain dump'), { target: { value: 'Create a valid workspace.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Build my workspace' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Build workspace' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Build workspace' }));
     await waitFor(() => expect(localStorage.getItem('bloxely-dashboard-state')).not.toBe(original), { timeout: 2500 });
     expect(loadDashboardState()?.workspace?.blocks).toHaveLength(2);
   });

@@ -13,6 +13,7 @@ import FloatingControlPanel from './FloatingControlPanel';
 import type { WidgetType } from '../types/dashboard';
 import type { WorkspacePlan } from '../types/workspace';
 import { buildWorkspace, createWorkspacePlan } from '../services/workspacePlan';
+import { generateAiWorkspacePlan } from '../services/aiWorkspacePlan';
 import BrainDumpInput from './BrainDumpInput';
 import WorkspacePlanReview from './WorkspacePlanReview';
 
@@ -23,6 +24,7 @@ const Dashboard: React.FC = () => {
   const [brainDump, setBrainDump] = useState('');
   const [plan, setPlan] = useState<WorkspacePlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
+  const [planning, setPlanning] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const appContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -69,12 +71,25 @@ const Dashboard: React.FC = () => {
     addWidget(widgetType);
   };
 
-  const handlePlan = () => {
+  const handlePlan = async () => {
+    if (planning || !brainDump.trim()) return;
+    setPlanning(true);
+    setPlanError(null);
+    try {
+      setPlan(await generateAiWorkspacePlan(brainDump));
+    } catch {
+      setPlanError("Bloxely couldn't build your plan. Try again.");
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const handleBasicPlan = () => {
     try {
       setPlan(createWorkspacePlan(brainDump));
       setPlanError(null);
-    } catch (error) {
-      setPlanError(error instanceof Error ? error.message : 'Could not create a plan.');
+    } catch {
+      setPlanError("Bloxely couldn't build your plan. Try again.");
     }
   };
 
@@ -128,8 +143,8 @@ const Dashboard: React.FC = () => {
             <WorkspacePlanReview plan={plan} onChange={setPlan} onBack={() => { setPlan(null); setPlanError(null); }} onConfirm={handleConfirm} error={planError} />
           ) : (
             <>
-              <BrainDumpInput value={brainDump} onChange={setBrainDump} onBuild={handlePlan} />
-              {planError && <p role="alert" className="text-center text-red-600">{planError}</p>}
+              <BrainDumpInput value={brainDump} onChange={setBrainDump} onBuild={handlePlan} loading={planning} />
+              {planError && <div className="text-center"><p role="alert" className="text-red-600">{planError}</p><div className="mt-3 flex justify-center gap-4"><button type="button" onClick={handlePlan} className="font-medium text-indigo-600 hover:underline">Retry</button><button type="button" onClick={handleBasicPlan} className="font-medium text-indigo-600 hover:underline">Use basic planner</button></div></div>}
             </>
           )
         ) : (

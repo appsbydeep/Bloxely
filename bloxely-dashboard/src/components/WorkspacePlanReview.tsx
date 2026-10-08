@@ -33,7 +33,7 @@ export default function WorkspacePlanReview({ plan, onChange, onBack, onConfirm,
     <section className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
       <p className="mb-2 text-sm font-semibold tracking-widest text-indigo-600 dark:text-indigo-300">WORKSPACE PLAN</p>
       <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Review your plan</h2>
-      <p className="mt-2 text-slate-600 dark:text-slate-300">This is a simple local draft. Edit it before building your workspace.</p>
+      <p className="mt-2 text-slate-600 dark:text-slate-300">Review and edit this draft before building your workspace.</p>
 
       <div className="mt-8 space-y-8">
         <section aria-labelledby="plan-tasks">
@@ -41,14 +41,16 @@ export default function WorkspacePlanReview({ plan, onChange, onBack, onConfirm,
           <div className="space-y-3">
             {plan.proposedTasks.length === 0 && <p className="text-slate-500">No tasks in this plan.</p>}
             {plan.proposedTasks.map((task, index) => (
-              <div key={task.id} className="flex gap-3">
+              <div key={task.id} className="flex flex-wrap gap-3">
                 <label className="sr-only" htmlFor={`task-${task.id}`}>Task {index + 1}</label>
                 <input id={`task-${task.id}`} value={task.title} onChange={event => setTaskTitle(task.id, event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-4 py-3 text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white" />
+                <span className="self-center text-sm text-slate-600 dark:text-slate-300">Suggested priority: {task.priority}{task.dueAt ? ` · Due: ${task.dueAt}` : ''}{task.estimatedMinutes ? ` · AI time estimate: ${task.estimatedMinutes} min` : ''}</span>
                 <button type="button" onClick={() => removeTask(task.id)} aria-label={`Remove task ${index + 1}`} className="rounded-lg border border-slate-300 px-4 hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-700">Remove</button>
               </div>
             ))}
           </div>
         </section>
+        {plan.unresolvedItems.length > 0 && <section aria-labelledby="plan-unresolved"><h3 id="plan-unresolved" className="mb-3 text-xl font-semibold">Needs clarification</h3><ul className="list-disc pl-5 text-slate-700 dark:text-slate-200">{plan.unresolvedItems.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></section>}
         <section aria-labelledby="plan-notes">
           <h3 id="plan-notes" className="mb-3 text-xl font-semibold">Notes</h3>
           <div className="space-y-3">

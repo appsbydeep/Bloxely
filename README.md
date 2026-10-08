@@ -92,6 +92,12 @@ Bloxely is about helping you block out distractions and build a dashboard that a
 * React + Tailwind — clean and responsive UI
 * Local Storage — data persistence without a heavy backend
 
+### Bloxely 2.0 AI planning setup
+
+Plan generation runs in a Netlify Function at `/.netlify/functions/generate-workspace-plan`. Bloxely AI sends the brain dump to the configured provider through that function. For the current Gemini provider, set `AI_PROVIDER=gemini` and `GEMINI_API_KEY=<your key>` for the **Functions** runtime in Netlify's environment settings. `GEMINI_MODEL=gemini-3.8-flash` is optional because that is the default. AI credentials stay server-side; never put a real key in the frontend or commit it. See `bloxely-dashboard/.env.example` for placeholders.
+
+For local AI planning, run the app through Netlify Dev with those variables in its environment. A plain Vite dev server does not serve Netlify Functions. If the function is unavailable, the brain dump screen offers **Use basic planner** after a failed request. Automated tests mock the provider and need no API key.
+
 ---
 
 ## ⚡ Challenges & Learnings
