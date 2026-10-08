@@ -1,6 +1,7 @@
 import { widgetFactory } from './WidgetFactory';
 import type { Workspace, WorkspaceBlock, WorkspacePlan, WorkspaceTask } from '../types/workspace';
 import { isGeneratedBlockType } from '../types/workspace';
+import { isValidTaskSuggestion } from '../utils/workspaceTaskValidation';
 
 const id = () => crypto.randomUUID();
 
@@ -39,6 +40,9 @@ export function buildWorkspace(plan: WorkspacePlan): Workspace {
   }
   if (plan.proposedTasks.length + plan.proposedNotes.length === 0) {
     throw new Error('Keep at least one task or note.');
+  }
+  if (!plan.proposedTasks.every(isValidTaskSuggestion)) {
+    throw new Error('A task has an invalid priority, due date, or estimate.');
   }
   if (plan.proposedBlocks.some(block =>
     !isGeneratedBlockType(block.type) ||

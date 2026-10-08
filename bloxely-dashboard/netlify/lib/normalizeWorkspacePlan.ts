@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkspacePlan, WorkspaceTask } from '../../src/types/workspace';
+import { isValidDueAt, MAX_ESTIMATED_MINUTES, MIN_ESTIMATED_MINUTES } from '../../src/utils/workspaceTaskValidation';
 
 const MAX_TASKS = 8;
 const MAX_NOTES = 8;
@@ -20,23 +21,6 @@ const cleanText = (value: unknown, maxLength: number): string => {
   return text;
 };
 
-const validDate = (value: string): boolean => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2}))?$/.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const calendarDate = new Date(Date.UTC(year, month - 1, day));
-  if (calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() + 1 !== month || calendarDate.getUTCDate() !== day) return false;
-  if (match[4] === undefined) return true;
-  if (Number(match[4]) > 23 || Number(match[5]) > 59 || Number(match[6]) > 59) return false;
-  if (match[7] !== 'Z') {
-    const offset = match[7].slice(1).split(':').map(Number);
-    if (offset[0] > 23 || offset[1] > 59) return false;
-  }
-  return Number.isFinite(Date.parse(value));
-};
-
 /** The model supplies content only. Bloxely owns IDs and block types. */
 export function normalizeWorkspacePlan(value: unknown, brainDump: string): WorkspacePlan {
   if (!record(value) || !Array.isArray(value.tasks) || !Array.isArray(value.notes) ||
@@ -50,10 +34,10 @@ export function normalizeWorkspacePlan(value: unknown, brainDump: string): Works
     const dueAt = item.dueAt;
     if (item.priority !== 'normal' && item.priority !== 'high' && item.priority !== 'urgent') throw new InvalidAiPlanError();
     if (item.estimatedMinutes != null &&
-        (!Number.isInteger(item.estimatedMinutes) || (item.estimatedMinutes as number) < 5 || (item.estimatedMinutes as number) > 480)) {
+        (!Number.isInteger(item.estimatedMinutes) || (item.estimatedMinutes as number) < MIN_ESTIMATED_MINUTES || (item.estimatedMinutes as number) > MAX_ESTIMATED_MINUTES)) {
       throw new InvalidAiPlanError();
     }
-    if (dueAt != null && (typeof dueAt !== 'string' || !validDate(dueAt))) throw new InvalidAiPlanError();
+    if (dueAt != null && (typeof dueAt !== 'string' || !isValidDueAt(dueAt))) throw new InvalidAiPlanError();
     return {
       id: randomUUID(), title, status: 'todo', priority: item.priority,
       ...(typeof dueAt === 'string' ? { dueAt } : {}),

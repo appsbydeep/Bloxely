@@ -69,6 +69,9 @@ describe('Bloxely 2.0 milestone 1', () => {
     expect(result.widgets[workspace.blocks[1].id].content.content).toBe('Remember the proposal');
     expect(emptyState().widgets).toEqual({});
     expect(() => buildWorkspace({ ...plan, proposedBlocks: [{ ...plan.proposedBlocks[0], type: 'calendar' as 'todo' }] })).toThrow('unsupported block');
+    expect(() => buildWorkspace({ ...plan, proposedTasks: [{ ...plan.proposedTasks[0], priority: 'critical' as 'normal' }] })).toThrow('invalid priority');
+    expect(() => buildWorkspace({ ...plan, proposedTasks: [{ ...plan.proposedTasks[0], dueAt: '2026-02-30' }] })).toThrow('invalid priority');
+    expect(() => buildWorkspace({ ...plan, proposedTasks: [{ ...plan.proposedTasks[0], estimatedMinutes: 481 }] })).toThrow('invalid priority');
   });
 
   it('rejects an unsupported block directly in the confirmation reducer', () => {

@@ -1,7 +1,19 @@
 import type { AIWorkspaceInput, AIWorkspacePlanner } from './aiWorkspacePlanner';
 import { AIPlannerTransportError } from './aiWorkspacePlanner';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+const REQUEST_BUDGET_MS = 25000;
+const MAX_RETRY_DELAY_MS = 2000;
+
+const retryDelay = (response: Response): number | null => {
+  const header = response.headers.get('retry-after');
+  if (!header) return 500;
+  const seconds = Number(header);
+  const milliseconds = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
+  if (!Number.isFinite(milliseconds)) return 500;
+  return milliseconds > MAX_RETRY_DELAY_MS ? null : Math.max(0, milliseconds);
+};
 
 const PLAN_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -33,8 +45,10 @@ export class GeminiWorkspacePlanner implements AIWorkspacePlanner {
 
   async generatePlanData(input: AIWorkspaceInput): Promise<unknown> {
     let response: Response;
-    try {
-      response = await this.fetchImpl(
+    const deadline = Date.now() + REQUEST_BUDGET_MS;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await this.fetchImpl(
         'https://generativelanguage.googleapis.com/v1beta/interactions',
         {
           method: 'POST',
@@ -47,13 +61,22 @@ export class GeminiWorkspacePlanner implements AIWorkspacePlanner {
             generation_config: { thinking_level: 'low', max_output_tokens: 4096 },
             store: false,
           }),
-          signal: AbortSignal.timeout(25000),
+          signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
         },
-      );
-    } catch {
-      throw new AIPlannerTransportError('upstream');
+        );
+      } catch {
+        throw new AIPlannerTransportError('upstream');
+      }
+      if (response.ok) break;
+      if (attempt === 0 && RETRYABLE_STATUSES.has(response.status)) {
+        const delay = retryDelay(response);
+        if (delay !== null && deadline - Date.now() > delay + 1000) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      throw new AIPlannerTransportError('upstream', response.status);
     }
-    if (!response.ok) throw new AIPlannerTransportError('upstream', response.status);
     try {
       const message: unknown = await response.json();
       if (!message || typeof message !== 'object') throw new Error('Invalid response');

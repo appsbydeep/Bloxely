@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import handler from '../../netlify/functions/generate-workspace-plan';
+import handler, { config } from '../../netlify/functions/generate-workspace-plan';
 import { AIPlannerTransportError } from '../../netlify/lib/aiWorkspacePlanner';
 import { DEFAULT_GEMINI_MODEL, GeminiWorkspacePlanner } from '../../netlify/lib/geminiWorkspacePlanner';
 import { InvalidAiPlanError, normalizeWorkspacePlan } from '../../netlify/lib/normalizeWorkspacePlan';
@@ -22,6 +22,12 @@ const request = () => new Request('https://example.netlify.app/.netlify/function
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('provider-neutral planner and Gemini transport', () => {
+  it('declares a Netlify edge limit for the public plan endpoint', () => {
+    expect(config).toEqual({
+      path: '/.netlify/functions/generate-workspace-plan',
+      rateLimit: { windowLimit: 10, windowSize: 60, aggregateBy: ['ip', 'domain'] },
+    });
+  });
   it('sends structured Gemini request with server-only credentials and local date', async () => {
     const fetchMock = vi.fn(async () => geminiResponse(modelOutput()));
     const planner = new GeminiWorkspacePlanner('test-key', DEFAULT_GEMINI_MODEL, fetchMock as typeof fetch);
@@ -57,6 +63,30 @@ describe('provider-neutral planner and Gemini transport', () => {
     await expect(new GeminiWorkspacePlanner('key', DEFAULT_GEMINI_MODEL, incomplete as typeof fetch)
       .generatePlanData({ brainDump: 'private', localDate: '2026-10-08', timeZone: 'UTC' }))
       .rejects.toMatchObject({ category: 'invalid_output' });
+  });
+
+  it('retries a temporary 503 once, then accepts the response', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('busy', { status: 503, headers: { 'retry-after': '0' } }))
+      .mockResolvedValueOnce(geminiResponse(modelOutput()));
+    const planner = new GeminiWorkspacePlanner('key', DEFAULT_GEMINI_MODEL, fetchMock as typeof fetch);
+    await expect(planner.generatePlanData({ brainDump: 'private', localDate: '2026-10-08', timeZone: 'UTC' })).resolves.toEqual(modelOutput());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('never retries more than once and does not retry non-retryable errors', async () => {
+    const busy = vi.fn(async () => new Response('busy', { status: 503, headers: { 'retry-after': '0' } }));
+    const input = { brainDump: 'private', localDate: '2026-10-08', timeZone: 'UTC' };
+    await expect(new GeminiWorkspacePlanner('key', DEFAULT_GEMINI_MODEL, busy as typeof fetch).generatePlanData(input))
+      .rejects.toMatchObject({ status: 503 });
+    expect(busy).toHaveBeenCalledTimes(2);
+    const invalidKey = vi.fn(async () => new Response('bad key', { status: 401 }));
+    await expect(new GeminiWorkspacePlanner('key', DEFAULT_GEMINI_MODEL, invalidKey as typeof fetch).generatePlanData(input))
+      .rejects.toMatchObject({ status: 401 });
+    expect(invalidKey).toHaveBeenCalledTimes(1);
+    const delayed = vi.fn(async () => new Response('busy', { status: 503, headers: { 'retry-after': '10' } }));
+    await expect(new GeminiWorkspacePlanner('key', DEFAULT_GEMINI_MODEL, delayed as typeof fetch).generatePlanData(input))
+      .rejects.toMatchObject({ status: 503 });
+    expect(delayed).toHaveBeenCalledTimes(1);
   });
 
   it('strips unknown fields and assigns Bloxely IDs and allowlisted blocks', () => {
@@ -124,5 +154,16 @@ describe('provider-neutral planner and Gemini transport', () => {
     }), { status: 200 })));
     const malformed = await handler(request());
     expect((await malformed.json()).error.code).toBe('AI_INVALID_OUTPUT');
+  });
+
+  it('returns a typed safe 429 when Gemini remains rate limited', async () => {
+    vi.stubEnv('AI_PROVIDER', 'gemini');
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const fetchMock = vi.fn(async () => new Response('private quota detail', { status: 429, headers: { 'retry-after': '0' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await handler(request());
+    expect(result.status).toBe(429);
+    expect(await result.json()).toEqual({ error: { code: 'AI_RATE_LIMITED', message: 'Bloxely could not build your plan.' } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -13,6 +13,13 @@ const localDateToday = (): string => {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
 };
 
+// Netlify enforces this at the edge across function instances. A block returns
+// its native 429 response before the handler runs, so it cannot carry our JSON error shape.
+export const config = {
+  path: '/.netlify/functions/generate-workspace-plan',
+  rateLimit: { windowLimit: 10, windowSize: 60, aggregateBy: ['ip', 'domain'] },
+};
+
 export default async function handler(request: Request): Promise<Response> {
   if (request.method !== 'POST') return error('METHOD_NOT_ALLOWED', 405);
   let input: unknown;
@@ -41,6 +48,7 @@ export default async function handler(request: Request): Promise<Response> {
     const output = await planner.generatePlanData({ brainDump, localDate, timeZone });
     return json({ plan: normalizeWorkspacePlan(output, brainDump) }, 200);
   } catch (caught) {
+    if (caught instanceof AIPlannerTransportError && caught.status === 429) return error('AI_RATE_LIMITED', 429);
     if (caught instanceof InvalidAiPlanError || caught instanceof AIPlannerTransportError && caught.category === 'invalid_output') {
       return error('AI_INVALID_OUTPUT', 502);
     }

@@ -94,9 +94,11 @@ Bloxely is about helping you block out distractions and build a dashboard that a
 
 ### Bloxely 2.0 AI planning setup
 
-Plan generation runs in a Netlify Function at `/.netlify/functions/generate-workspace-plan`. Bloxely AI sends the brain dump to the configured provider through that function. For the current Gemini provider, set `AI_PROVIDER=gemini` and `GEMINI_API_KEY=<your key>` for the **Functions** runtime in Netlify's environment settings. `GEMINI_MODEL=gemini-3.8-flash` is optional because that is the default. AI credentials stay server-side; never put a real key in the frontend or commit it. See `bloxely-dashboard/.env.example` for placeholders.
+Plan generation runs in a Netlify Function at `/.netlify/functions/generate-workspace-plan`. Bloxely AI sends the brain dump to the configured provider through that function. For the current Gemini provider, set `AI_PROVIDER=gemini` and `GEMINI_API_KEY=<your key>` for the **Functions** runtime in Netlify's environment settings. `GEMINI_MODEL=gemini-3.5-flash-lite` is optional because that is the fallback verified in the live planning flow; another supported Interactions model can be configured with the same variable. AI credentials stay server-side; never put a real key in the frontend or commit it. See `bloxely-dashboard/.env.example` for placeholders.
 
 For local AI planning, run the app through Netlify Dev with those variables in its environment. A plain Vite dev server does not serve Netlify Functions. If the function is unavailable, the brain dump screen offers **Use basic planner** after a failed request. Automated tests mock the provider and need no API key.
+
+The planning function keeps the 5,000-character brain-dump and 12,000-character JSON-body limits. Its Netlify rate rule blocks more than 10 requests per IP and domain in 60 seconds with a platform HTTP 429. Gemini 429 responses that reach the function return a typed `AI_RATE_LIMITED` error; the frontend shows its existing safe failure message for both. Netlify's edge block has no application JSON body, and enforcement can lag by up to 10 seconds. Before a fully public launch, verify the rule appears in Netlify's deploy post-processing log and add platform-level spend/abuse controls appropriate to expected traffic; the per-IP rule is not a global cost ceiling. No in-memory limiter is used.
 
 ---
 
@@ -130,7 +132,6 @@ This project is licensed under the [MIT License](LICENSE).
 Special thanks to **Kiro** for making the build process faster, cleaner, and more structured. Without it, Bloxely would have taken much longer to bring to life.
 
 ---
-
 
 
 
