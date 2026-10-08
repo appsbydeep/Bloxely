@@ -1,7 +1,10 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import type { BlockLayout, WorkspaceBlock } from '../types/workspace';
 
 interface FreeLayoutManagerProps {
   children: React.ReactNode;
+  generatedBlocks?: WorkspaceBlock[];
+  onGeneratedLayoutChange?: (blockId: string, layout: BlockLayout) => void;
 }
 
 interface WidgetSize {
@@ -29,28 +32,35 @@ const getCanvasZoomLevel = (): number => {
  * Free layout manager that displays widgets with unrestricted movement
  * similar to Miro, using refs for positions to prevent React re-render issues.
  */
-const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
+const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children, generatedBlocks, onGeneratedLayoutChange }) => {
   const childArray = React.Children.toArray(children) as React.ReactElement[];
+  const generatedLayouts = useMemo(() => new Map(generatedBlocks?.map(block => [block.id, block.layout]) ?? []), [generatedBlocks]);
+  const generatedCanvasHeight = generatedBlocks?.length
+    ? Math.max(...generatedBlocks.map(block => block.layout.y + block.layout.height + 48)) : undefined;
   const [widgetSizes, setWidgetSizes] = useState<WidgetSize[]>([]);
   const widgetPositionsRef = useRef<Record<string, {x: number, y: number}>>({});
   const resizingWidget = useRef<{id: string, startX: number, startY: number, startWidth: number, startHeight: number, element: HTMLElement} | null>(null);
   const draggingWidget = useRef<{id: string, startX: number, startY: number, startLeft: number, startTop: number, element: HTMLElement} | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
-  const prevChildrenCountRef = useRef(0);
 
   // Initialize widget sizes and positions
   React.useEffect(() => {
-    const currentChildrenCount = childArray.length;
-    
-    // Check if we have new widgets
-    const hasNewWidgets = currentChildrenCount > prevChildrenCountRef.current;
+    const hasNewWidgets = childArray.some((child, idx) => {
+      const props: any = child.props || {};
+      const widgetId = props.widget?.id || props.widgetId || props['data-widget-id'] || `child-${idx}`;
+      return !widgetSizes.some(size => size.id === widgetId);
+    });
     
     // Always update for new widgets, but only initialize once for the initial set
     if (!initializedRef.current || hasNewWidgets) {
+      // Mark this pass before setWidgetSizes triggers another render.
+      initializedRef.current = true;
       const initialSizes: WidgetSize[] = childArray.map((child, idx) => {
         const props: any = child.props || {};
         const widgetId = props.widget?.id || props.widgetId || props['data-widget-id'] || `child-${idx}`;
+        const generatedLayout = generatedLayouts.get(widgetId);
+        if (generatedLayout) return { id: widgetId, width: generatedLayout.width, height: generatedLayout.height };
         
         // Check if we already have a size for this widget
         const existingSize = widgetSizes.find(size => size.id === widgetId);
@@ -89,6 +99,11 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
       childArray.forEach((child, idx) => {
         const props: any = child.props || {};
         const widgetId = props.widget?.id || props.widgetId || props['data-widget-id'] || `child-${idx}`;
+        const generatedLayout = generatedLayouts.get(widgetId);
+        if (generatedLayout) {
+          widgetPositionsRef.current[widgetId] = { x: generatedLayout.x, y: generatedLayout.y };
+          return;
+        }
         
         // Skip if we already have a position for this widget
         if (widgetPositionsRef.current[widgetId]) {
@@ -129,7 +144,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
       setTimeout(() => {
         Object.entries(widgetPositionsRef.current).forEach(([widgetId, position]) => {
           const element = document.getElementById(`widget-${widgetId}`);
-          if (element) {
+          if (element && !generatedLayouts.has(widgetId)) {
             // Position directly using style for immediate effect
             element.style.left = `${position.x}px`;
             element.style.top = `${position.y}px`;
@@ -150,15 +165,9 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
           }
         });
         
-        if (!initializedRef.current) {
-          initializedRef.current = true;
-        }
-        
-        // Update the previous children count
-        prevChildrenCountRef.current = currentChildrenCount;
       }, 100);
     }
-  }, [childArray, widgetSizes]);
+  }, [childArray, widgetSizes, generatedLayouts]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent, widgetId: string) => {
     e.preventDefault();
@@ -167,7 +176,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     const element = document.getElementById(`widget-${widgetId}`);
     if (!element) return;
     
-    const widgetSize = widgetSizes.find(size => size.id === widgetId);
+    const widgetSize = generatedLayouts.get(widgetId) ?? widgetSizes.find(size => size.id === widgetId);
     if (!widgetSize) return;
     
     resizingWidget.current = {
@@ -184,7 +193,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     
     document.addEventListener('mousemove', handleResizeMove);
     document.addEventListener('mouseup', handleResizeEnd);
-  }, [widgetSizes]);
+  }, [widgetSizes, generatedLayouts]);
 
   const handleDragStart = useCallback((e: React.MouseEvent, widgetId: string) => {
     e.preventDefault();
@@ -193,8 +202,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     const element = document.getElementById(`widget-${widgetId}`);
     if (!element) return;
     
-    // Get current position from our ref
-    const position = widgetPositionsRef.current[widgetId] || { x: 0, y: 0 };
+    const position = generatedLayouts.get(widgetId) ?? widgetPositionsRef.current[widgetId] ?? { x: 0, y: 0 };
     
     draggingWidget.current = {
       id: widgetId,
@@ -216,7 +224,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     
     document.addEventListener('mousemove', handleDragMove);
     document.addEventListener('mouseup', handleDragEnd);
-  }, []);
+  }, [generatedLayouts]);
 
   const handleResizeMove = useCallback((e: MouseEvent) => {
     if (!resizingWidget.current) return;
@@ -279,7 +287,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     const viewportHeight = Math.max(canvasRect.height / effectiveZoomLevel, window.innerHeight);
     
     // Get widget dimensions in logical coordinates
-    const widgetSize = widgetSizes.find(size => size.id === id);
+    const widgetSize = generatedLayouts.get(id) ?? widgetSizes.find(size => size.id === id);
     const elementWidth = widgetSize?.width || 300;
     const elementHeight = widgetSize?.height || 300;
 
@@ -299,7 +307,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
 
     // Also update our ref to keep track of the position
     widgetPositionsRef.current[id] = { x: newLeft, y: newTop };
-  }, [widgetSizes]);
+  }, [widgetSizes, generatedLayouts]);
 
   const handleResizeEnd = useCallback(() => {
     if (!resizingWidget.current) return;
@@ -328,18 +336,16 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
       )
     );
     
-    // Persist widget size to localStorage
-    try {
-      const storageKey = `widget-size-${id}`;
-      const sizeData = {
-        width: finalWidth,
-        height: finalHeight,
-        timestamp: Date.now()
-      };
-      localStorage.setItem(storageKey, JSON.stringify(sizeData));
-      console.log('Widget size saved to localStorage:', id, finalWidth, finalHeight);
-    } catch (error) {
-      console.warn('Failed to save widget size:', error);
+    const generatedLayout = generatedBlocks?.find(block => block.id === id)?.layout;
+    if (generatedLayout) {
+      onGeneratedLayoutChange?.(id, { x: generatedLayout.x, y: generatedLayout.y, width: finalWidth, height: finalHeight });
+    } else {
+      // Preserve the legacy widget storage path.
+      try {
+        localStorage.setItem(`widget-size-${id}`, JSON.stringify({ width: finalWidth, height: finalHeight, timestamp: Date.now() }));
+      } catch (error) {
+        console.warn('Failed to save widget size:', error);
+      }
     }
     
     // Add smooth transition back to normal state
@@ -352,7 +358,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     
     document.removeEventListener('mousemove', handleResizeMove);
     document.removeEventListener('mouseup', handleResizeEnd);
-  }, [handleResizeMove]);
+  }, [handleResizeMove, generatedBlocks, onGeneratedLayoutChange]);
 
   const handleDragEnd = useCallback(() => {
     if (!draggingWidget.current) return;
@@ -367,18 +373,16 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     // Update our ref with the final position
     widgetPositionsRef.current[id] = { x: finalX, y: finalY };
     
-    // Persist widget position to localStorage immediately for better reliability
-    try {
-      const storageKey = `widget-position-${id}`;
-      const positionData = {
-        x: finalX,
-        y: finalY,
-        timestamp: Date.now()
-      };
-      localStorage.setItem(storageKey, JSON.stringify(positionData));
-      console.log('Widget position saved to localStorage:', id, finalX, finalY);
-    } catch (error) {
-      console.warn('Failed to save widget position:', error);
+    const generatedLayout = generatedBlocks?.find(block => block.id === id)?.layout;
+    if (generatedLayout) {
+      onGeneratedLayoutChange?.(id, { x: finalX, y: finalY, width: generatedLayout.width, height: generatedLayout.height });
+    } else {
+      // Preserve the legacy widget storage path.
+      try {
+        localStorage.setItem(`widget-position-${id}`, JSON.stringify({ x: finalX, y: finalY, timestamp: Date.now() }));
+      } catch (error) {
+        console.warn('Failed to save widget position:', error);
+      }
     }
     
     draggingWidget.current = null;
@@ -400,7 +404,7 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     
     document.removeEventListener('mousemove', handleDragMove);
     document.removeEventListener('mouseup', handleDragEnd);
-  }, [handleDragMove]);
+  }, [handleDragMove, generatedBlocks, onGeneratedLayoutChange]);
 
   // Clean up event listeners on unmount
   useEffect(() => {
@@ -414,13 +418,17 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
     <div
       ref={containerRef}
       className={`free-layout-container w-full relative min-h-screen ${draggingWidget.current ? 'dragging-active' : ''}`}
-      style={{ cursor: draggingWidget.current ? 'grabbing' : 'default', background: 'transparent' }}
+      style={{ cursor: draggingWidget.current ? 'grabbing' : 'default', background: 'transparent', minHeight: generatedCanvasHeight }}
     >
       {childArray.map((child, idx) => {
         const props: any = child.props || {};
         const widgetId = props.widget?.id || props.widgetId || props['data-widget-id'] || `child-${idx}`;
+        const generatedLayout = generatedLayouts.get(widgetId);
         const widgetSize = widgetSizes.find(size => size.id === widgetId);
-        const widgetPosition = widgetPositionsRef.current[widgetId] || { x: 0, y: 0 };
+        const isGeneratedResizing = resizingWidget.current?.id === widgetId;
+        const isGeneratedDragging = draggingWidget.current?.id === widgetId;
+        const widgetPosition = generatedLayout && !isGeneratedDragging
+          ? generatedLayout : widgetPositionsRef.current[widgetId] || { x: 0, y: 0 };
         const isDragging = draggingWidget.current?.id === widgetId;
         
         return (
@@ -429,8 +437,8 @@ const FreeLayoutManager: React.FC<FreeLayoutManagerProps> = ({ children }) => {
             id={`widget-${widgetId}`}
             className={`widget-container absolute cursor-move ${isDragging ? 'dragging' : ''}`}
             style={{
-              width: widgetSize?.width || 300,
-              height: widgetSize?.height || 300,
+              width: generatedLayout && !isGeneratedResizing ? generatedLayout.width : widgetSize?.width || 300,
+              height: generatedLayout && !isGeneratedResizing ? generatedLayout.height : widgetSize?.height || 300,
               left: widgetPosition.x,
               top: widgetPosition.y,
               zIndex: isDragging ? 1000 : 1,

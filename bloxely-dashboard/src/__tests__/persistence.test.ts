@@ -164,7 +164,8 @@ describe('Persistence Utils', () => {
         'Failed to load dashboard state:',
         expect.any(Error)
       );
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('bloxely-dashboard-state');
+      expect(localStorageMock.removeItem).not.toHaveBeenCalledWith('bloxely-dashboard-state');
+      expect(localStorageMock.getItem('bloxely-dashboard-state')).toBe('invalid json');
     });
 
     it('should handle invalid state structure', () => {

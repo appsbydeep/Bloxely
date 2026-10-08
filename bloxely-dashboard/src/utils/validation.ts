@@ -1,4 +1,31 @@
 import type { DashboardState } from '../types/dashboard';
+import type { Workspace } from '../types/workspace';
+import { isGeneratedBlockType } from '../types/workspace';
+import { widgetFactory } from '../services/WidgetFactory';
+
+export const isValidWorkspace = (value: unknown): value is Workspace => {
+  if (!value || typeof value !== 'object') return false;
+  const workspace = value as Partial<Workspace>;
+  if (workspace.schemaVersion !== 1 || typeof workspace.id !== 'string' ||
+      typeof workspace.title !== 'string' || typeof workspace.createdAt !== 'string' ||
+      typeof workspace.updatedAt !== 'string' || !Array.isArray(workspace.tasks) ||
+      !Array.isArray(workspace.notes) || !Array.isArray(workspace.blocks)) return false;
+  const tasks = workspace.tasks;
+  const notes = workspace.notes;
+  if (!tasks.every(task => task && typeof task.id === 'string' && typeof task.title === 'string' &&
+      ['todo', 'done'].includes(task.status) && ['normal', 'high', 'urgent'].includes(task.priority))) return false;
+  if (!notes.every(note => note && typeof note.id === 'string' && typeof note.content === 'string')) return false;
+  const taskIds = new Set(tasks.map(task => task.id));
+  const noteIds = new Set(notes.map(note => note.id));
+  return workspace.blocks.every(block => block && typeof block.id === 'string' &&
+    isGeneratedBlockType(block.type) &&
+    widgetFactory.getWidgetDefinition(block.type) && widgetFactory.isSupported(block.type) &&
+    typeof block.title === 'string' && block.layout &&
+    [block.layout.x, block.layout.y, block.layout.width, block.layout.height].every(Number.isFinite) &&
+    block.layout.width > 0 && block.layout.height > 0 &&
+    (block.type === 'todo' ? Array.isArray(block.taskIds) && block.taskIds.every(id => taskIds.has(id))
+      : typeof block.noteId === 'string' && noteIds.has(block.noteId)));
+};
 
 export interface ValidationError {
   field: string;
@@ -297,6 +324,17 @@ export const validateDashboardState = (state: DashboardState | any): ValidationR
       code: 'REQUIRED',
     });
     return { isValid: false, errors };
+  }
+
+  if (state.workspace !== undefined && !isValidWorkspace(state.workspace)) {
+    errors.push({ field: 'workspace', message: 'Workspace data is invalid', code: 'INVALID_STRUCTURE' });
+  } else if (state.workspace && state.widgets && typeof state.widgets === 'object') {
+    for (const block of state.workspace.blocks) {
+      const widget = state.widgets[block.id];
+      if (!widget || widget.id !== block.id || widget.type !== block.type) {
+        errors.push({ field: `workspace.blocks.${block.id}`, message: 'Workspace block has no matching widget', code: 'INVALID_STRUCTURE' });
+      }
+    }
   }
 
   // Validate layout

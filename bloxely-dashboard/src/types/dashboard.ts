@@ -1,3 +1,5 @@
+import type { Workspace } from './workspace';
+
 export type WidgetType = 'clock' | 'sticky-note' | 'todo' | 'pomodoro' | 'kanban' |
                          'music-player' | 'custom-wallpaper' | 'personal-image' | 'habit-tracker' | 'image-collector' | 'priority-matrix' | 'youtube-player' | 'calendar' | 'voice-text-notes';
 
@@ -39,6 +41,7 @@ export interface DashboardState {
   layout: GridLayout[];
   widgets: Record<string, WidgetData>;
   settings: DashboardSettings;
+  workspace?: Workspace;
 }
 
 // Widget-specific data types
@@ -167,6 +170,5 @@ export interface CalendarData {
   currentDate: string; // YYYY-MM-DD format for current month view
   tasks: CalendarTask[];
 }
-
 
 

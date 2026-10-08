@@ -1,11 +1,12 @@
-import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { DashboardState, DashboardSettings, WidgetData, GridLayout } from '../types/dashboard';
 import type { DashboardAction } from '../types/actions';
-import { loadDashboardState, isStorageAvailable } from '../utils/persistence';
-import { validateDashboardState } from '../utils/validation';
+import { loadDashboardState, isStorageAvailable, hasStoredDashboardState } from '../utils/persistence';
+import { validateDashboardState, isValidWorkspace } from '../utils/validation';
 import { useDebouncedPersistence } from '../hooks/useDebouncedPersistence';
 import { useNotifications } from '../context/NotificationContext';
+import type { Workspace, WorkspaceTask } from '../types/workspace';
 
 // Initial state
 const initialSettings: DashboardSettings = {
@@ -22,7 +23,9 @@ const initialState: DashboardState = {
 };
 
 // Dashboard reducer
-function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
+// Exported for direct tests of atomic workspace confirmation.
+// eslint-disable-next-line react-refresh/only-export-components
+export function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
   switch (action.type) {
     case 'ADD_WIDGET': {
       const { widgetType, position } = action.payload;
@@ -73,6 +76,11 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         ...state,
         widgets: remainingWidgets,
         layout: state.layout.filter(item => item.i !== widgetId),
+        workspace: state.workspace ? {
+          ...state.workspace,
+          blocks: state.workspace.blocks.filter(block => block.id !== widgetId),
+          updatedAt: new Date().toISOString(),
+        } : undefined,
       };
     }
 
@@ -83,8 +91,30 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         return state;
       }
 
+      const block = state.workspace?.blocks.find(item => item.id === widgetId);
+      let workspace = state.workspace;
+      if (workspace && block?.type === 'todo' && Array.isArray(content?.tasks)) {
+        const previous = new Map(workspace.tasks.map(task => [task.id, task]));
+        const tasks: WorkspaceTask[] = content.tasks.map((task: { id: string; text: string; completed: boolean }) => ({
+          id: task.id,
+          title: task.text,
+          status: task.completed ? 'done' : 'todo',
+          priority: previous.get(task.id)?.priority ?? 'normal',
+          ...(previous.get(task.id)?.dueAt ? { dueAt: previous.get(task.id)?.dueAt } : {}),
+          ...(previous.get(task.id)?.estimatedMinutes ? { estimatedMinutes: previous.get(task.id)?.estimatedMinutes } : {}),
+        }));
+        workspace = { ...workspace, tasks, updatedAt: new Date().toISOString() };
+      } else if (workspace && block?.type === 'sticky-note' && block.noteId && typeof content?.content === 'string') {
+        workspace = {
+          ...workspace,
+          notes: workspace.notes.map(note => note.id === block.noteId ? { ...note, content: content.content } : note),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
       return {
         ...state,
+        workspace,
         widgets: {
           ...state.widgets,
           [widgetId]: {
@@ -103,6 +133,39 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         ...state,
         layout,
       };
+    }
+
+    case 'UPDATE_BLOCK_LAYOUT': {
+      if (!state.workspace?.blocks.some(block => block.id === action.payload.blockId)) return state;
+      return {
+        ...state,
+        workspace: {
+          ...state.workspace,
+          blocks: state.workspace.blocks.map(block => block.id === action.payload.blockId
+            ? { ...block, layout: action.payload.layout } : block),
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    case 'CONFIRM_WORKSPACE_PLAN': {
+      const workspace: Workspace = action.payload.workspace;
+      if (!isValidWorkspace(workspace)) return state;
+      const now = new Date();
+      const widgets = { ...state.widgets };
+      for (const block of workspace.blocks) {
+        const content = block.type === 'todo'
+          ? { tasks: workspace.tasks.map(task => ({
+              id: task.id, text: task.title, completed: task.status === 'done', createdAt: now,
+            })) }
+          : { content: workspace.notes.find(note => note.id === block.noteId)?.content ?? '',
+              color: getDefaultContent('sticky-note').color };
+        widgets[block.id] = {
+          id: block.id, type: block.type, content, config: { title: block.title },
+          createdAt: now, updatedAt: now,
+        };
+      }
+      return { ...state, workspace, widgets };
     }
 
     case 'UPDATE_SETTINGS': {
@@ -179,6 +242,8 @@ export function DashboardProvider({ children }: DashboardProviderProps) {
   const [state, dispatch] = useReducer(dashboardReducer, initialState);
   const [isLoading, setIsLoading] = useState(true);
   const [persistenceEnabled, setPersistenceEnabled] = useState(false);
+  const [persistenceBlockedBecauseLoadFailed, setPersistenceBlockedBecauseLoadFailed] = useState(false);
+  const blockedStateRef = useRef<DashboardState | null>(null);
   const { showError, showWarning, showSuccess } = useNotifications();
 
   // Initialize persistence and load saved state
@@ -191,6 +256,7 @@ export function DashboardProvider({ children }: DashboardProviderProps) {
 
         if (storageAvailable) {
           // Try to load saved state
+          const hadSavedState = hasStoredDashboardState();
           const savedState = loadDashboardState();
           
           if (savedState) {
@@ -202,6 +268,8 @@ export function DashboardProvider({ children }: DashboardProviderProps) {
               dispatch({ type: 'LOAD_STATE', payload: { state: savedState } });
               showSuccess('Dashboard Restored', 'Your workspace has been restored from local storage.');
             } else {
+              blockedStateRef.current = initialState;
+              setPersistenceBlockedBecauseLoadFailed(true);
               console.warn('Loaded state is invalid:', validation.errors);
               showWarning(
                 'Invalid Data Detected',
@@ -211,6 +279,10 @@ export function DashboardProvider({ children }: DashboardProviderProps) {
               // Use default state instead
             }
           } else {
+            if (hadSavedState) {
+              blockedStateRef.current = initialState;
+              setPersistenceBlockedBecauseLoadFailed(true);
+            }
             console.log('No saved state found, using default state');
           }
         } else {
@@ -236,9 +308,17 @@ export function DashboardProvider({ children }: DashboardProviderProps) {
     initializePersistence();
   }, [showError, showWarning, showSuccess]);
 
+  useEffect(() => {
+    if (persistenceBlockedBecauseLoadFailed && state !== blockedStateRef.current &&
+        validateDashboardState(state).isValid) {
+      blockedStateRef.current = null;
+      setPersistenceBlockedBecauseLoadFailed(false);
+    }
+  }, [state, persistenceBlockedBecauseLoadFailed]);
+
   // Set up debounced persistence
   const { forceSave } = useDebouncedPersistence(state, {
-    enabled: persistenceEnabled && !isLoading,
+    enabled: persistenceEnabled && !isLoading && !persistenceBlockedBecauseLoadFailed,
     delay: 1000
   });
 
@@ -248,7 +328,7 @@ export function DashboardProvider({ children }: DashboardProviderProps) {
         state, 
         dispatch, 
         isLoading, 
-        persistenceEnabled, 
+        persistenceEnabled: persistenceEnabled && !persistenceBlockedBecauseLoadFailed,
         forceSave 
       }}
     >

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useDashboard } from '../context/DashboardContext';
 import { useDashboardSelectors } from '../hooks/useDashboardSelectors';
 import { useDashboardActions } from '../hooks/useDashboardActions';
@@ -11,11 +11,18 @@ import WallpaperSelector from './WallpaperSelector';
 import WidgetDropdown from './WidgetDropdown';
 import FloatingControlPanel from './FloatingControlPanel';
 import type { WidgetType } from '../types/dashboard';
+import type { WorkspacePlan } from '../types/workspace';
+import { buildWorkspace, createWorkspacePlan } from '../services/workspacePlan';
+import BrainDumpInput from './BrainDumpInput';
+import WorkspacePlanReview from './WorkspacePlanReview';
 
 const Dashboard: React.FC = () => {
-  const { isLoading, persistenceEnabled } = useDashboard();
+  const { state, isLoading, persistenceEnabled } = useDashboard();
   const { hasWidgets, widgets } = useDashboardSelectors();
-  const { addWidget } = useDashboardActions();
+  const { addWidget, confirmWorkspacePlan, updateBlockLayout } = useDashboardActions();
+  const [brainDump, setBrainDump] = useState('');
+  const [plan, setPlan] = useState<WorkspacePlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const appContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -62,6 +69,28 @@ const Dashboard: React.FC = () => {
     addWidget(widgetType);
   };
 
+  const handlePlan = () => {
+    try {
+      setPlan(createWorkspacePlan(brainDump));
+      setPlanError(null);
+    } catch (error) {
+      setPlanError(error instanceof Error ? error.message : 'Could not create a plan.');
+    }
+  };
+
+  const handleConfirm = () => {
+    if (!plan) return;
+    try {
+      confirmWorkspacePlan(buildWorkspace(plan));
+      setPlan(null);
+      setPlanError(null);
+    } catch (error) {
+      setPlanError(error instanceof Error ? error.message : 'Could not build your workspace.');
+    }
+  };
+
+  const showEntry = !state.workspace && !hasWidgets;
+
   // Show loading state while initializing
   if (isLoading) {
     return (
@@ -85,7 +114,7 @@ const Dashboard: React.FC = () => {
           <div className="flex items-center gap-3">
             <WallpaperSelector />
             <ThemeToggle />
-            <WidgetDropdown onAddWidget={handleAddWidget} />
+            {!showEntry && <WidgetDropdown onAddWidget={handleAddWidget} />}
           </div>
         </div>
       </header>
@@ -94,17 +123,18 @@ const Dashboard: React.FC = () => {
         ref={canvasRef}
         className="canvas-container w-full p-0 m-0 min-h-screen relative z-[1] transition-colors duration-300"
       >
-        {!hasWidgets ? (
-          <div className="text-center py-20 w-full">
-            <div className="mb-6">
-              <div className="text-6xl mb-4">🎯</div>
-              <h2 className="text-2xl text-slate-800 dark:text-slate-200 mb-4 font-semibold">Your focus dashboard is ready</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-lg">Select "Add Widget" to start building your workspace</p>
-            </div>
-          </div>
+        {showEntry ? (
+          plan ? (
+            <WorkspacePlanReview plan={plan} onChange={setPlan} onBack={() => { setPlan(null); setPlanError(null); }} onConfirm={handleConfirm} error={planError} />
+          ) : (
+            <>
+              <BrainDumpInput value={brainDump} onChange={setBrainDump} onBuild={handlePlan} />
+              {planError && <p role="alert" className="text-center text-red-600">{planError}</p>}
+            </>
+          )
         ) : (
           <div className="canvas-content">
-            <FreeLayoutManager>
+            <FreeLayoutManager generatedBlocks={state.workspace?.blocks} onGeneratedLayoutChange={updateBlockLayout}>
               {Object.values(widgets).map((widget) => (
                 <WidgetRenderer key={widget.id} widget={widget} />
               ))}
@@ -117,7 +147,7 @@ const Dashboard: React.FC = () => {
       <PersistenceStatus />
 
       {/* Floating control panel */}
-      <FloatingControlPanel appContainerRef={appContainerRef} />
+      {!showEntry && <FloatingControlPanel appContainerRef={appContainerRef} />}
     </div>
   );
 };

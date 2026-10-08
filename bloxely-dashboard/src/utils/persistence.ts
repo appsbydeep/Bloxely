@@ -3,6 +3,14 @@ import type { DashboardState } from '../types/dashboard';
 const STORAGE_KEY = 'bloxely-dashboard-state';
 const STORAGE_VERSION = '1.0';
 
+export const hasStoredDashboardState = (): boolean => {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+};
+
 export interface StorageData {
   version: string;
   timestamp: number;
@@ -104,14 +112,7 @@ export const loadDashboardState = (): DashboardState | null => {
   } catch (error) {
     console.error('Failed to load dashboard state:', error);
     
-    // If parsing fails, clear the corrupted data
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      console.log('Cleared corrupted localStorage data');
-    } catch (clearError) {
-      console.error('Failed to clear corrupted data:', clearError);
-    }
-    
+    // Preserve the original value for recovery instead of deleting it.
     return null;
   }
 };
